@@ -1,56 +1,44 @@
-use maplit::hashmap;
+use std::collections::HashMap;
 use std::sync::mpsc::channel;
 use stringlit::s;
 use twitch_chat_wrapper::{run, ChatMessage};
+use serde::{Serialize, Deserialize};
 
-const COMMANDS: [&str; 11] = [
-    "!ping",
-    "!github | !git | !gh",
-    "!boss",
-    "!togglebit | !toggle",
-    "!catpeasant | !cat",
-    "!arcticspacefox | !arctic",
-    "!bob",
-    "!energy",
-    "!pog",
-    "!lul",
-    "!hype",
-];
-const ARCTIC: &str = "Look what @ArcticSpaceFox made: iamhar2Bob iamhar2Energy";
-const CATPEASANT: &str = "toggle8Catpeasant";
-const TOGGLEBIT: &str = "https://www.twitch.tv/togglebit";
-const GITHUB: &str = "https://github.com/hardliner66";
+#[derive(Serialize, Deserialize, Debug)]
+struct Config {
+    variables: HashMap<String, String>,
+    commands: HashMap<String, String>,
+}
 
-fn handle_msg(message: &str) -> Option<String> {
-    let simple = hashmap! {
-        s!("!ping") => "pong".to_string(),
-        s!("!git") => GITHUB.to_string(),
-        s!("!github")  => GITHUB.to_string(),
-        s!("!gh") => GITHUB.to_string(),
-        s!("!boss") => "toggle8Boss".to_string(),
-        s!("!toggle") => TOGGLEBIT.to_string(),
-        s!("!togglebit") => TOGGLEBIT.to_string(),
-        s!("!cat") => CATPEASANT.to_string(),
-        s!("!catpeasant") => CATPEASANT.to_string(),
-        s!("!arctic") => ARCTIC.to_string(),
-        s!("!arcticspacefox") => ARCTIC.to_string(),
-        s!("!bob") => "iamhar2Bob".to_string(),
-        s!("!energy") => "iamhar2Energy".to_string(),
-        s!("!pog") => "PogChamp".to_string(),
-        s!("!lul") => "LUL".to_string(),
-        s!("!lurk") => "Have fun lurking! iamhar2Bob".to_string(),
-        s!("!os") => "Hardliner is using Manjaro.".to_string(),
-        s!("!commands") => COMMANDS.join(" | "),
-    };
+const DEFAULT_CONFIG: &str = include_str!("../defaults.toml");
 
-    simple.get(message).cloned().or_else(|| {
-        if message.starts_with("!hype") {
+impl Default for Config {
+  fn default() -> Self {
+      toml::from_str(DEFAULT_CONFIG).unwrap()
+  }
+}
+
+fn handle_msg(cfg: &Config, msg: &ChatMessage) -> Option<String> {
+    let message = msg.message.to_lowercase();
+
+    cfg.commands.get(&message).cloned().map(|msg| {
+        let mut msg = msg;
+        if msg.contains('$') {
+            for (name, value) in &cfg.variables {
+                msg = msg.replace(&format!("${}", name), &value);
+            }
+        }
+        msg
+    }).or_else(|| {
+        if message.starts_with("!commands") {
+            Some( cfg.commands.keys().cloned().collect::<Vec<_>>().join(" | ") )
+        } else if message.starts_with("!hype") {
             Some(
                 message
                     .chars()
                     .filter(|&c| c == 'e')
                     .take(30)
-                    .map(|_| "sinticaHype")
+                    .map(|_| "iamhar2Bob")
                     .collect::<Vec<_>>()
                     .join(" "),
             )
@@ -66,14 +54,18 @@ fn main() -> anyhow::Result<()> {
     let (tx, rx) = channel::<String>();
     let (tx2, rx2) = channel::<ChatMessage>();
 
-
     std::thread::spawn(move || {
+        let mut home = dirs::home_dir().unwrap();
+        home.push(".config/hardbot/config.toml");
+        
+        let config: Config = std::fs::read_to_string(home).iter().flat_map(|s| {
+          toml::from_str(&s)
+        }).next().unwrap_or_default();
         while let Ok(msg) = rx2.recv() {
             if let Some(response) = {
-                let message = msg.message.to_lowercase();
-                handle_msg(&message)
+                handle_msg(&config, &msg)
             } {
-                for msg in response.split("\n") {
+                for msg in response.split('\n') {
                     tx.send(msg.to_owned()).unwrap();
                 }
             }

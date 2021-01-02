@@ -11,5 +11,6 @@ twitch_chat_wrapper = "0.2.0"
 anyhow = "1.0.36"
 stringlit = "2.0.0"
 maplit = "1.0.2"
-serde = "1.0.118"
+serde = {version = "1.0.118", features = ["derive"]}
 toml = "0.5.8"
+dirs = "3.0.1"
