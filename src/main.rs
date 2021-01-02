@@ -42,6 +42,7 @@ fn main() -> anyhow::Result<()> {
         s!("!pog") => "PogChamp".to_string(),
         s!("!lul") => "LUL".to_string(),
         s!("!lurk") => "Have fun lurking! iamhar2Bob".to_string(),
+        s!("!os") => "Hardliner is using Manjaro.".to_string(),
         s!("!commands") => COMMANDS.join(" | "),
     };
 
