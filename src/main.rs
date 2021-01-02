@@ -1,7 +1,8 @@
+use tungstenite::{connect, Message};
+use url::Url;
 use maplit::hashmap;
 use std::sync::mpsc::channel;
 use stringlit::s;
-use twitch_chat_wrapper::{run, ChatMessage};
 
 const COMMANDS: [&str; 11] = [
     "!ping",
@@ -62,23 +63,32 @@ fn handle_msg(message: &str) -> Option<String> {
     })
 }
 
+const WS_URL: &str = "wss://pubsub-edge.twitch.tv";
+
 fn main() -> anyhow::Result<()> {
     let (tx, rx) = channel::<String>();
-    let (tx2, rx2) = channel::<ChatMessage>();
+    let (tx2, rx2) = channel::<String>();
 
 
     std::thread::spawn(move || {
-        while let Ok(msg) = rx2.recv() {
-            if let Some(response) = {
-                let message = msg.message.to_lowercase();
-                handle_msg(&message)
-            } {
-                for msg in response.split("\n") {
-                    tx.send(msg.to_owned()).unwrap();
-                }
-            }
-        }
+        // handle messages
     });
 
-    Ok(run(rx, tx2).unwrap())
+    let (mut socket, response) =
+        connect(Url::parse(WS_URL).unwrap()).expect("Can't connect");
+
+    println!("Connected to the server");
+    println!("Response HTTP code: {}", response.status());
+    println!("Response contains the following headers:");
+    for (ref header, _value) in response.headers() {
+        println!("* {}", header);
+    }
+
+    // socket.write_message(Message::Text("Hello WebSocket".into())).unwrap();
+    loop {
+        let msg = socket.read_message().expect("Error reading message");
+        println!("Received: {}", msg);
+    }
+    
+    Ok(())
 }
