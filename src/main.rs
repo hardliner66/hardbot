@@ -21,10 +21,7 @@ const CATPEASANT: &str = "toggle8Catpeasant";
 const TOGGLEBIT: &str = "https://www.twitch.tv/togglebit";
 const GITHUB: &str = "https://github.com/hardliner66";
 
-fn main() -> anyhow::Result<()> {
-    let (tx, rx) = channel::<String>();
-    let (tx2, rx2) = channel::<ChatMessage>();
-
+fn handle_msg(message: &str) -> Option<String> {
     let simple = hashmap! {
         s!("!ping") => "pong".to_string(),
         s!("!git") => GITHUB.to_string(),
@@ -46,27 +43,35 @@ fn main() -> anyhow::Result<()> {
         s!("!commands") => COMMANDS.join(" | "),
     };
 
+    simple.get(message).cloned().or_else(|| {
+        if message.starts_with("!hype") {
+            Some(
+                message
+                    .chars()
+                    .filter(|&c| c == 'e')
+                    .take(30)
+                    .map(|_| "sinticaHype")
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )
+        } else if message.starts_with("!") && !message.chars().all(|c| c == '!') {
+            Some(s!("No hacking allowed!\nUse !commands to see available commands."))
+        } else {
+            None
+        }
+    })
+}
+
+fn main() -> anyhow::Result<()> {
+    let (tx, rx) = channel::<String>();
+    let (tx2, rx2) = channel::<ChatMessage>();
+
+
     std::thread::spawn(move || {
         while let Ok(msg) = rx2.recv() {
             if let Some(response) = {
                 let message = msg.message.to_lowercase();
-                simple.get(&message).cloned().or_else(|| {
-                    if message.starts_with("!hype") {
-                        Some(
-                            message
-                                .chars()
-                                .filter(|&c| c == 'e')
-                                .take(30)
-                                .map(|_| "sinticaHype")
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        )
-                    } else if message.starts_with("!") && !message.chars().all(|c| c == '!') {
-                        Some(s!("No hacking allowed!\nUse !commands to see available commands."))
-                    } else {
-                        None
-                    }
-                })
+                handle_msg(&message)
             } {
                 for msg in response.split("\n") {
                     tx.send(msg.to_owned()).unwrap();
