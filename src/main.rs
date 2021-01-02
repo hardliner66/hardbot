@@ -1,5 +1,3 @@
-use tungstenite::{connect, Message};
-use url::Url;
 use maplit::hashmap;
 use std::sync::mpsc::channel;
 use stringlit::s;
@@ -24,24 +22,24 @@ const GITHUB: &str = "https://github.com/hardliner66";
 
 fn handle_msg(message: &str) -> Option<String> {
     let simple = hashmap! {
-        s!("!ping") => "pong".to_string(),
-        s!("!git") => GITHUB.to_string(),
-        s!("!github")  => GITHUB.to_string(),
-        s!("!gh") => GITHUB.to_string(),
-        s!("!boss") => "toggle8Boss".to_string(),
-        s!("!toggle") => TOGGLEBIT.to_string(),
-        s!("!togglebit") => TOGGLEBIT.to_string(),
-        s!("!cat") => CATPEASANT.to_string(),
-        s!("!catpeasant") => CATPEASANT.to_string(),
-        s!("!arctic") => ARCTIC.to_string(),
-        s!("!arcticspacefox") => ARCTIC.to_string(),
-        s!("!bob") => "iamhar2Bob".to_string(),
-        s!("!energy") => "iamhar2Energy".to_string(),
-        s!("!pog") => "PogChamp".to_string(),
-        s!("!lul") => "LUL".to_string(),
-        s!("!lurk") => "Have fun lurking! iamhar2Bob".to_string(),
-        s!("!os") => "Hardliner is using Manjaro.".to_string(),
-        s!("!commands") => COMMANDS.join(" | "),
+        "!ping" => "pong".to_string(),
+        "!git" => GITHUB.to_string(),
+        "!github" => GITHUB.to_string(),
+        "!gh" => GITHUB.to_string(),
+        "!boss" => "toggle8Boss".to_string(),
+        "!toggle" => TOGGLEBIT.to_string(),
+        "!togglebit" => TOGGLEBIT.to_string(),
+        "!cat" => CATPEASANT.to_string(),
+        "!catpeasant" => CATPEASANT.to_string(),
+        "!arctic" => ARCTIC.to_string(),
+        "!arcticspacefox" => ARCTIC.to_string(),
+        "!bob" => "iamhar2Bob".to_string(),
+        "!energy" => "iamhar2Energy".to_string(),
+        "!pog" => "PogChamp".to_string(),
+        "!lul" => "LUL".to_string(),
+        "!lurk" => "Have fun lurking! iamhar2Bob".to_string(),
+        "!os" => "Hardliner is using Manjaro.".to_string(),
+        "!commands" => COMMANDS.join(" | "),
     };
 
     simple.get(message).cloned().or_else(|| {
@@ -69,26 +67,7 @@ fn main() -> anyhow::Result<()> {
     let (tx, rx) = channel::<String>();
     let (tx2, rx2) = channel::<String>();
 
+    println!("{:?}", handle_msg("!os"));
 
-    std::thread::spawn(move || {
-        // handle messages
-    });
-
-    let (mut socket, response) =
-        connect(Url::parse(WS_URL).unwrap()).expect("Can't connect");
-
-    println!("Connected to the server");
-    println!("Response HTTP code: {}", response.status());
-    println!("Response contains the following headers:");
-    for (ref header, _value) in response.headers() {
-        println!("* {}", header);
-    }
-
-    // socket.write_message(Message::Text("Hello WebSocket".into())).unwrap();
-    loop {
-        let msg = socket.read_message().expect("Error reading message");
-        println!("Received: {}", msg);
-    }
-    
     Ok(())
 }

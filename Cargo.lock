@@ -357,11 +357,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "maplit",
- "serde 1.0.118",
  "stringlit",
  "toml",
  "twitch-discord-bot",
- "url",
 ]
 
 [[package]]
