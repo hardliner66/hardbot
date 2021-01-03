@@ -1,3 +1,8 @@
+[points]
+ticks_per_message = 5
+points_per_tick = 1
+tick_speed = 1
+
 [variables]
 NAME = "hardbot"
 
