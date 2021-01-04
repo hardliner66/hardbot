@@ -1,76 +1,26 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use stringlit::s;
 use twitch_chat_wrapper::{run, ChatMessage};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-struct PointConfig {
-    ticks_per_message: i64,
-    points_per_tick: u64,
-    tick_speed: f32,
-}
+mod config;
+mod runtime;
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Config {
-    points: PointConfig,
-    variables: HashMap<String, String>,
-    commands: HashMap<String, String>,
-}
+use runtime::Runtime;
 
-struct Chatter {
-    pub points: u64,
-    pub remaining_ticks: i64,
-}
-
-impl Default for Chatter {
-    fn default() -> Self {
-        Chatter {
-            points: 0,
-            remaining_ticks: 0,
-        }
-    }
-}
-
-struct Runtime {
-    pub points_config: PointConfig,
-    pub commands: HashMap<String, String>,
-    pub chatters: HashMap<String, Chatter>,
-}
-
-impl Into<Runtime> for Config {
-    fn into(self) -> Runtime {
-        let mut commands = HashMap::new();
-        for (name, value) in self.commands {
-            let mut value = value;
-            for (variable_name, variable_value) in &self.variables {
-                value = value.replace(&format!("${}", variable_name), &variable_value);
-            }
-            commands.insert(format!("!{}", name), value);
-        }
-        Runtime {
-            commands,
-            chatters: HashMap::new(),
-            points_config: self.points.clone(),
-        }
-    }
-}
-
-const DEFAULT_CONFIG: &str = include_str!("../defaults.toml");
-
-impl Default for Config {
-    fn default() -> Self {
-        toml::from_str(DEFAULT_CONFIG).unwrap()
-    }
-}
+const CONFIG_FILE: &str = "config.toml";
+const DATA_FILE: &str = "data.toml";
 
 fn handle_msg(rt: &mut Runtime, msg: &ChatMessage) -> Option<String> {
     println!("{}: {}", msg.name, msg.message);
     let message = msg.message.trim().to_lowercase();
 
     if !message.starts_with("!") {
-        (*rt.chatters
+        (*rt
+            .data
+            .chatters
             .entry(msg.name.clone())
             .or_insert(Default::default()))
         .remaining_ticks = rt.points_config.ticks_per_message;
@@ -83,7 +33,8 @@ fn handle_msg(rt: &mut Runtime, msg: &ChatMessage) -> Option<String> {
             Some(format!(
                 "@{} currently has {} points!",
                 msg.name,
-                rt.chatters
+                rt.data
+                    .chatters
                     .get(&msg.name)
                     .map(|chatter| chatter.points)
                     .unwrap_or_default()
@@ -109,7 +60,7 @@ fn handle_msg(rt: &mut Runtime, msg: &ChatMessage) -> Option<String> {
 }
 
 fn give_points(rt: &mut Runtime) {
-    for (_, chatter) in rt.chatters.iter_mut() {
+    for (_, chatter) in rt.data.chatters.iter_mut() {
         if chatter.remaining_ticks > 0 {
             chatter.points += rt.points_config.points_per_tick;
             chatter.remaining_ticks -= 1;
@@ -121,18 +72,31 @@ fn main() -> anyhow::Result<()> {
     let (tx, rx) = channel::<String>();
     let (tx2, rx2) = channel::<ChatMessage>();
 
-    std::thread::spawn(move || {
-        let mut home = dirs::home_dir().unwrap();
-        home.push(".config/hardbot/config.toml");
+    std::thread::spawn(move || -> anyhow::Result<()> {
+        let mut data_dir = dirs::home_dir().unwrap();
+        data_dir.push(".config/hardbot");
 
-        let config: Config = std::fs::read_to_string(home)
+        let config_file = data_dir.join(CONFIG_FILE);
+        let data_file = data_dir.join(DATA_FILE);
+
+        let sig_term = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&sig_term))?;
+
+        let sig_int = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&sig_int))?;
+
+        let config = config::Config::load(config_file);
+        let mut rt: Runtime = config.into();
+
+        rt.data = std::fs::read_to_string(&data_file)
             .iter()
             .flat_map(|s| toml::from_str(&s))
             .next()
             .unwrap_or_default();
-        let mut rt: Runtime = config.into();
+
         let mut last_check = SystemTime::now();
-        loop {
+        let mut last_save = SystemTime::now();
+        while !sig_int.load(Ordering::Relaxed) && !sig_term.load(Ordering::Relaxed) {
             while let Ok(msg) = rx2.recv_timeout(Duration::from_secs(1)) {
                 if let Some(response) = { handle_msg(&mut rt, &msg) } {
                     for msg in response.split('\n') {
@@ -140,17 +104,30 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-            let time_since_last_check = SystemTime::now()
+
+            let now = SystemTime::now();
+
+            let time_since_last_check = now
                 .duration_since(last_check)
                 .unwrap()
                 .as_secs_f32();
+
             if time_since_last_check > rt.points_config.tick_speed {
                 for _ in 0..(time_since_last_check as u128) {
                     give_points(&mut rt);
                 }
-                last_check = SystemTime::now();
+                last_check = now;
+            }
+
+            if now.duration_since(last_save).unwrap().as_secs_f32() > 60.0 {
+                std::fs::write(&data_file, toml::to_string(&rt.data)?)?;
+                last_save = now;
             }
         }
+
+        std::fs::write(data_file, toml::to_string(&rt.data)?)?;
+
+        std::process::exit(0);
     });
 
     Ok(run(rx, tx2).unwrap())
