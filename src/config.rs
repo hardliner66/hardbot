@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -6,7 +6,7 @@ use std::path::Path;
 pub struct Points {
     pub ticks_per_message: i64,
     pub points_per_tick: u64,
-    pub tick_speed: f32,
+    pub tick_speed: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

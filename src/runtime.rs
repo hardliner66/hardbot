@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -36,7 +36,7 @@ impl Into<Runtime> for crate::config::Config {
             for (variable_name, variable_value) in &self.variables {
                 value = value.replace(&format!("${}", variable_name), &variable_value);
             }
-            commands.insert(format!("!{}", name), value);
+            commands.insert(format!("{}", name), value);
         }
         Runtime {
             commands,
@@ -47,4 +47,3 @@ impl Into<Runtime> for crate::config::Config {
         }
     }
 }
-
