@@ -3,6 +3,7 @@ use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use twitch_chat_wrapper::{run, ChatMessage};
+use rand::random;
 
 mod bot;
 mod config;
@@ -91,10 +92,33 @@ fn main() -> anyhow::Result<()> {
       format!("Top 5 requested by @{}: {}", name, top5.join(" | "))
     });
 
+    // bot.register("steal", |runtime, name, msg| {
+    //   let parts = msg.split(' ').collect::<Vec<_>>();
+
+    //   if parts.len() == 2 {
+    //       let other = get_name_from_string(&parts[1]);
+    //       if let Some(chatter) = runtime.data.chatters.get_mut(&other) {
+    //           let roll: f32 = random();
+    //           if roll < 0.000000000000001 {
+
+    //           } else {
+    //             format!("@{} stealing is bad, mkayyy", name)
+    //           }
+    //       } else {
+    //           format!("@{} can't steal from {} because they have no points!", name, other)
+    //       }
+    //   } else {
+    //     format!(
+    //       "{} You need to specify a person you want to steal from! For example: !steal iamhardbot 999",
+    //       name
+    //     )
+    //   }
+    // });
+
     bot.register("give", |runtime, name, msg| {
       let parts = msg.split(' ').collect::<Vec<_>>();
 
-      let response = if parts.len() == 3 {
+      if parts.len() == 3 {
         let receiver_name = get_name_from_string(&parts[1]);
         match parts[2].parse::<u64>() {
           Ok(amount) => {
@@ -139,13 +163,11 @@ fn main() -> anyhow::Result<()> {
         }
       } else {
         format!(
-          "{} You need to specify a receiver and an amount! For example: !give IAmHardliner 999",
+          "{} You need to specify a receiver and an amount! For example: !give iamhardbot 999",
           name
         )
         .to_string()
-      };
-
-      response
+      }
     });
 
     let handler_names = bot.handlers.keys().cloned().collect::<Vec<_>>();
