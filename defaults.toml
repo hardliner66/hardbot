@@ -1,10 +1,10 @@
+[general]
+save_time = 60
+
 [points]
 ticks_per_message = 5
 points_per_tick = 1
 tick_speed = 1
-
-[variables]
-NAME = "hardbot"
-
-[commands]
-"!bot" = "This is $NAME!"
+steal_chance = 0.001
+steal_min = 1
+steal_max = 10
