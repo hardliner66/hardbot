@@ -13,6 +13,11 @@ pub struct Bot {
     pub runtime: Runtime,
 }
 
+// eww, don't do that
+// TODO: fix that properly!
+unsafe impl Send for Bot {}
+unsafe impl Sync for Bot {}
+
 impl Bot {
     pub fn new(config: Config) -> Self {
         Bot {
