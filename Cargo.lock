@@ -804,8 +804,6 @@ dependencies = [
 [[package]]
 name = "twitch_chat_wrapper"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f4565ad3c771c4e5996fc3656ea8d5ea25b446cb64a6b51bb498fc92d82004e"
 dependencies = [
  "dotenv",
  "eyre",

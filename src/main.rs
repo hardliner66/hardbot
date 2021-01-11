@@ -1,7 +1,7 @@
 use rand::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use twitch_chat_wrapper::{run, ChatMessage};
 
@@ -31,139 +31,130 @@ fn main() -> anyhow::Result<()> {
     let (tx, rx) = channel::<String>();
     let (tx2, rx2) = channel::<ChatMessage>();
 
-    std::thread::spawn(move || -> anyhow::Result<()> {
-        let mut data_dir = dirs::home_dir().unwrap();
-        data_dir.push(".config/hardbot");
+    let mut data_dir = dirs::home_dir().unwrap();
+    data_dir.push(".config/hardbot");
 
-        let config_file = data_dir.join(CONFIG_FILE);
+    let config_file = data_dir.join(CONFIG_FILE);
 
-        let sig_term = Arc::new(AtomicBool::new(false));
-        signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&sig_term))?;
+    let config = config::Config::load(config_file);
+    let mut bot = Bot::new(config);
 
-        let sig_int = Arc::new(AtomicBool::new(false));
-        signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&sig_int))?;
+    bot.register(
+        "hype",
+        |config, _commands, _data, _user_access, _name, msg| {
+            let response = msg
+                .chars()
+                .filter(|&c| c == 'e')
+                .take(30)
+                .map(|_| config.general.hype_emote.clone())
+                .collect::<Vec<_>>()
+                .join(" ");
+            Some(response)
+        },
+    );
 
-        let config = config::Config::load(config_file);
+    bot.register(
+        "points",
+        |_config, _commandss, data, _user_access, name, msg| {
+            let message = get_name_from_string(&msg[6..]);
+            let name = if message.is_empty() { name } else { &message };
+            let response = format!(
+                "@{} currently has {} points!",
+                name,
+                data.chatters
+                    .get(name)
+                    .map(|chatter| chatter.points)
+                    .unwrap_or_default()
+            );
+            Some(response)
+        },
+    );
 
-        let mut bot = Bot::new(config);
+    bot.register(
+        "mod",
+        move |_config, _commands, _data, user_access, name, _msg| {
+            if user_access.is_mod || user_access.is_admin {
+                Some(format!("@{} you are a mod!", name))
+            } else {
+                None
+            }
+        },
+    );
 
-        bot.register(
-            "hype",
-            |config, _commands, _data, _user_access, _name, msg| {
-                let response = msg
-                    .chars()
-                    .filter(|&c| c == 'e')
-                    .take(30)
-                    .map(|_| config.general.hype_emote.clone())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                Some(response)
-            },
-        );
+    bot.register(
+        "top",
+        move |config, _commands, data, _user_access, name, _msg| {
+            let mut chatters = data.chatters.iter().collect::<Vec<_>>();
+            chatters.sort_by_key(|value| value.1.points);
+            let top5 = chatters
+                .iter()
+                .rev()
+                .map(|(name, _)| *name)
+                .cloned()
+                .filter(|name| {
+                    !config
+                        .user_access
+                        .entry(name.to_owned())
+                        .or_insert_with(|| Default::default())
+                        .is_ignored
+                })
+                .enumerate()
+                .take(5)
+                .map(|(i, name)| format!("{}. {}", i + 1, name))
+                .collect::<Vec<_>>();
+            let response = format!("Top 5, requested by @{}: {}", name, top5.join(" | "));
+            Some(response)
+        },
+    );
 
-        bot.register(
-            "points",
-            |_config, _commandss, data, _user_access, name, msg| {
-                let message = get_name_from_string(&msg[6..]);
-                let name = if message.is_empty() { name } else { &message };
-                let response = format!(
-                    "@{} currently has {} points!",
-                    name,
-                    data.chatters
-                        .get(name)
-                        .map(|chatter| chatter.points)
-                        .unwrap_or_default()
-                );
-                Some(response)
-            },
-        );
+    bot.register(
+        "steal",
+        |config, _commands, data, _user_access, name, msg| {
+            let mut rng = rand::thread_rng();
+            let parts = msg.split(' ').collect::<Vec<_>>();
 
-        bot.register(
-            "mod",
-            move |_config, _commands, _data, user_access, name, _msg| {
-                if user_access.is_mod || user_access.is_admin {
-                    Some(format!("@{} you are a mod!", name))
-                } else {
-                    None
-                }
-            },
-        );
-
-        bot.register(
-            "top",
-            move |config, _commands, data, _user_access, name, _msg| {
-                let mut chatters = data.chatters.iter().collect::<Vec<_>>();
-                chatters.sort_by_key(|value| value.1.points);
-                let top5 = chatters
-                    .iter()
-                    .rev()
-                    .map(|(name, _)| *name)
-                    .cloned()
-                    .filter(|name| {
-                        !config
-                            .user_access
-                            .entry(name.to_owned())
-                            .or_insert_with(|| Default::default())
-                            .is_ignored
-                    })
-                    .enumerate()
-                    .take(5)
-                    .map(|(i, name)| format!("{}. {}", i + 1, name))
-                    .collect::<Vec<_>>();
-                let response = format!("Top 5, requested by @{}: {}", name, top5.join(" | "));
-                Some(response)
-            },
-        );
-
-        bot.register(
-            "steal",
-            |config, _commands, data, _user_access, name, msg| {
-                let mut rng = rand::thread_rng();
-                let parts = msg.split(' ').collect::<Vec<_>>();
-
-                let response = if parts.len() == 2 {
-                    let other = get_name_from_string(&parts[1]);
-                    let mut amount = 0;
-                    let response = if let Some(chatter) = data.chatters.get_mut(&other) {
-                        let roll: f32 = rng.gen();
-                        if dbg!(roll) < config.points.steal_chance {
-                            amount =
-                                rng.gen_range(config.points.steal_min..=config.points.steal_max);
-                            if chatter.points >= amount {
-                                chatter.points = chatter.points.saturating_sub(amount);
-                            } else {
-                                amount = chatter.points;
-                                chatter.points = 0;
-                            }
-                            None
+            let response = if parts.len() == 2 {
+                let other = get_name_from_string(&parts[1]);
+                let mut amount = 0;
+                let response = if let Some(chatter) = data.chatters.get_mut(&other) {
+                    let roll: f32 = rng.gen();
+                    if dbg!(roll) < config.points.steal_chance {
+                        amount = rng.gen_range(config.points.steal_min..=config.points.steal_max);
+                        if chatter.points >= amount {
+                            chatter.points = chatter.points.saturating_sub(amount);
                         } else {
-                            Some(format!("@{} stealing is bad, mkayyy", name))
+                            amount = chatter.points;
+                            chatter.points = 0;
                         }
+                        None
                     } else {
-                        Some(format!(
-                            "@{} can't steal from {} because they have no points!",
-                            name, other
-                        ))
-                    };
-
-                    match response {
-                        None => {
-                            (*data.chatters.entry(name.to_owned()).or_default()).points = amount;
-                            format!("@{} stole {} points from {}!", name, amount, other)
-                        }
-                        Some(s) => s,
+                        Some(format!("@{} stealing is bad, mkayyy", name))
                     }
                 } else {
-                    format!(
+                    Some(format!(
+                        "@{} can't steal from {} because they have no points!",
+                        name, other
+                    ))
+                };
+
+                match response {
+                    None => {
+                        (*data.chatters.entry(name.to_owned()).or_default()).points = amount;
+                        format!("@{} stole {} points from {}!", name, amount, other)
+                    }
+                    Some(s) => s,
+                }
+            } else {
+                format!(
           "{} You need to specify a person you want to steal from! For example: !steal iamhardbot",
           name
         )
-                };
-                Some(response)
-            },
-        );
+            };
+            Some(response)
+        },
+    );
 
-        bot.register(
+    bot.register(
             "give",
             |_config, _commands, data, _user_access, name, msg| {
                 let parts = msg.split(' ').collect::<Vec<_>>();
@@ -221,43 +212,64 @@ fn main() -> anyhow::Result<()> {
             },
         );
 
-        bot.register(
-            "lurk",
-            |_config, _commands, _data, _user_access, name, _msg| {
-                Some(format!("Have fun lurking @{}! iamhar2Bob", name))
-            },
-        );
-        bot.register(
-            "unlurk",
-            |_config, _commands, _data, _user_access, name, _msg| {
-                Some(format!("Welcome back from lurking @{}! iamhar2Bob", name))
-            },
-        );
+    bot.register(
+        "lurk",
+        |_config, _commands, _data, _user_access, name, _msg| {
+            Some(format!("Have fun lurking @{}! iamhar2Bob", name))
+        },
+    );
 
-        let handler_names = bot.handlers.keys().cloned().collect::<Vec<_>>();
+    bot.register(
+        "unlurk",
+        |_config, _commands, _data, _user_access, name, _msg| {
+            Some(format!("Welcome back from lurking @{}! iamhar2Bob", name))
+        },
+    );
 
-        bot.register(
-            "commands",
-            move |_config, commands, _data, _user_access, _name, _msg| {
-                let mut handlers = handler_names.clone();
-                let mut commands = commands.keys().cloned().collect::<Vec<_>>();
-                commands.append(&mut handlers);
-                commands.iter_mut().for_each(|c| c.insert(0, '!'));
-                let response = commands.join(" | ");
-                Some(response)
-            },
-        );
+    bot.register("hi", |_config, _commands, _data, _user_access, name, _msg| {
+        Some(format!("Hello, {}!", name))
+    });
+
+    let handler_names = bot.handlers.keys().cloned().collect::<Vec<_>>();
+
+    bot.register(
+        "commands",
+        move |_config, commands, _data, _user_access, _name, _msg| {
+            let mut handlers = handler_names.clone();
+            let mut commands = commands.keys().cloned().collect::<Vec<_>>();
+            commands.append(&mut handlers);
+            commands.iter_mut().for_each(|c| c.insert(0, '!'));
+            let response = commands.join(" | ");
+            Some(response)
+        },
+    );
+
+    let bot = Arc::new(Mutex::new(bot));
+
+    let bot_sender = tx2.clone();
+
+    std::thread::spawn(move || -> anyhow::Result<()> {
+        let sig_term = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&sig_term))?;
+
+        let sig_int = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&sig_int))?;
 
         let mut last_check = SystemTime::now();
         let mut last_save = SystemTime::now();
         let mut last_auto_action = SystemTime::now();
 
-        let auto_commands = bot.runtime.config.auto_commands.commands.clone();
+        let (auto_commands, message_timeout) = {
+            let bot = bot.lock().unwrap();
+            let message_timeout = bot.runtime.config.general.message_timeout.unwrap_or(1);
+            let auto_commands = bot.runtime.config.auto_commands.commands.clone();
+            (auto_commands, message_timeout)
+        };
         let mut auto_commands = auto_commands.iter().cycle();
 
-        let message_timeout = bot.runtime.config.general.message_timeout.unwrap_or(1);
         while !sig_int.load(Ordering::Relaxed) && !sig_term.load(Ordering::Relaxed) {
             while let Ok(msg) = rx2.recv_timeout(Duration::from_secs(message_timeout)) {
+                let mut bot = bot.lock().unwrap();
                 if let Some(response) = { bot.handle_message(&msg.name, &msg.message) } {
                     for msg in response.split('\n') {
                         tx.send(msg.to_owned()).unwrap();
@@ -267,6 +279,8 @@ fn main() -> anyhow::Result<()> {
 
             let now = SystemTime::now();
 
+            {
+                let mut bot = bot.lock().unwrap();
             let time_since_last_check = now.duration_since(last_check).unwrap().as_secs_f32();
             if time_since_last_check > bot.runtime.config.points.tick_speed as f32 {
                 for _ in 0..(time_since_last_check as u64 / bot.runtime.config.points.tick_speed) {
@@ -287,18 +301,13 @@ fn main() -> anyhow::Result<()> {
             {
                 last_auto_action = now;
                 if let Some(command) = auto_commands.next() {
-                    if let Some(response) =
-                        { bot.handle_message("<auto>", &format!("!{}", command)) }
-                    {
-                        for msg in response.split('\n') {
-                            tx.send(msg.to_owned()).unwrap();
-                        }
-                    }
+                    let _ = bot_sender.send(ChatMessage::builder("<auto>".to_string(), format!("!{}", command)).build());
                 }
+            }
             }
         }
 
-        let _ = bot.save_data();
+        let _ = bot.lock().unwrap().save_data();
 
         std::process::exit(0);
     });
