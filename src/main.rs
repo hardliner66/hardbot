@@ -312,5 +312,22 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(0);
     });
 
-    Ok(run(rx, tx2).unwrap())
+    let twitch_name = get_env_var("TWITCH_NAME").unwrap();
+    let twitch_token = get_env_var("TWITCH_TOKEN").unwrap();
+    let channels_to_join = channels_to_join().unwrap();
+
+    Ok(run(twitch_name, twitch_token, channels_to_join, rx, tx2).unwrap())
+}
+
+fn channels_to_join() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let channels = get_env_var("TWITCH_CHANNEL")?
+        .split(',')
+        .map(ToString::to_string)
+        .collect();
+    Ok(channels)
+}
+
+fn get_env_var(key: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let my_var = std::env::var(key)?;
+    Ok(my_var)
 }
