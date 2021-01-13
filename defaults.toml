@@ -1,5 +1,6 @@
 [general]
 save_time = 60
+hype_emote = "PogChamp"
 
 [points]
 ticks_per_message = 5
@@ -8,3 +9,12 @@ tick_speed = 1
 steal_chance = 0.001
 steal_min = 1
 steal_max = 10
+
+[variables]
+HARDBOT_URL = "https://github.com/hardliner66/hardbot"
+
+[aliases]
+"b" = "bot"
+
+[commands]
+"bot" = "This is hardbot! You can find me at $HARDBOT_URL"
