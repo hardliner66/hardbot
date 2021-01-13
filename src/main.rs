@@ -244,6 +244,20 @@ fn main() -> anyhow::Result<()> {
         },
     );
 
+    bot.register("so", |_config, _commands, _data, user_access, _name, msg| {
+        if user_access.is_admin {
+            let parts = msg.split(" ").collect::<Vec<_>>();
+            if let Some(part) = parts.get(1) {
+                let name = get_name_from_string(part);
+                Some(format!("Shoutout to @{}. You can check out their stream at https://www.twitch.tv/{}", name, name))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+
     let bot = Arc::new(Mutex::new(bot));
 
     let bot_sender = tx2.clone();
