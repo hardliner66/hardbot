@@ -1,15 +1,15 @@
-use crate::config::{Config, UserAccess};
+use crate::config::Config;
 use crate::runtime::{Commands, Data, Runtime};
 use std::collections::HashMap;
 
+pub struct Handler {
+    handle_function:
+        Box<dyn Fn(&mut Config, &Commands, &mut Data, &str, &str) -> Option<String> + 'static>,
+    allow_list: Option<Vec<String>>,
+}
+
 pub struct Bot {
-    pub handlers: HashMap<
-        String,
-        Box<
-            dyn Fn(&mut Config, &Commands, &mut Data, &UserAccess, &str, &str) -> Option<String>
-                + 'static,
-        >,
-    >,
+    pub handlers: HashMap<String, Handler>,
     pub runtime: Runtime,
 }
 
@@ -27,13 +27,20 @@ impl Bot {
     }
 
     pub fn register<
-        F: Fn(&mut Config, &Commands, &mut Data, &UserAccess, &str, &str) -> Option<String> + 'static,
+        F: Fn(&mut Config, &Commands, &mut Data, &str, &str) -> Option<String> + 'static,
     >(
         &mut self,
         prefix: &str,
+        allow_list: Option<Vec<String>>,
         f: F,
     ) {
-        self.handlers.insert(prefix.to_owned(), Box::new(f));
+        self.handlers.insert(
+            prefix.to_owned(),
+            Handler {
+                handle_function: Box::new(f),
+                allow_list,
+            },
+        );
     }
 
     pub fn save_data(&self) -> anyhow::Result<()> {
@@ -54,13 +61,6 @@ impl Bot {
             .remaining_ticks = self.runtime.config.points.ticks_per_message;
             None
         } else {
-            let user_access = self
-                .runtime
-                .config
-                .user_access
-                .get(name)
-                .copied()
-                .unwrap_or_default();
             let message = message
                 .chars()
                 .skip_while(|&c| c == '!')
@@ -74,14 +74,34 @@ impl Bot {
                         .next()
                     {
                         match self.handlers.get(command) {
-                            Some(handler) => handler(
-                                &mut self.runtime.config,
-                                &self.runtime.commands,
-                                &mut self.runtime.data,
-                                &user_access,
-                                &name,
-                                &message,
-                            ),
+                            Some(handler) => {
+                                let allowed = if let Some(allow_list) = &handler.allow_list {
+                                    eprintln!("{:?}", self.runtime.config.groups);
+                                    allow_list.contains(&format!("@{}", name))
+                                        || self
+                                            .runtime
+                                            .config
+                                            .groups
+                                            .iter()
+                                            .filter(|(_, g)| dbg!(g).users.contains(&name.to_owned()))
+                                            .any(|(name, _)| {
+                                                allow_list.contains(&format!("#{}", name))
+                                            })
+                                } else {
+                                    true
+                                };
+                                if allowed {
+                                    (handler.handle_function)(
+                                        &mut self.runtime.config,
+                                        &self.runtime.commands,
+                                        &mut self.runtime.data,
+                                        &name,
+                                        &message,
+                                    )
+                                } else {
+                                    None
+                                }
+                            }
                             None => None,
                         }
                     } else {

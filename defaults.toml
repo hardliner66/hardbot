@@ -13,8 +13,12 @@ steal_max = 10
 [variables]
 HARDBOT_URL = "https://github.com/hardliner66/hardbot"
 
-[aliases]
-"b" = "bot"
-
 [commands]
-"bot" = "This is hardbot! You can find me at $HARDBOT_URL"
+"bot" = { value = "This is hardbot! You can find me at $HARDBOT_URL", aliases = ["b"] }
+
+# [allow]
+# so = "#admin"
+
+# [deny]
+# hype = "@user"
+

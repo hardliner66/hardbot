@@ -28,14 +28,9 @@ impl Default for AutoCommands {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
-pub struct UserAccess {
-    #[serde(default)]
-    pub is_admin: bool,
-    #[serde(default)]
-    pub is_mod: bool,
-    #[serde(default)]
-    pub is_ignored: bool,
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct Group {
+    pub users: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -43,6 +38,30 @@ pub struct General {
     pub save_time: f32,
     pub hype_emote: String,
     pub message_timeout: Option<u64>,
+    #[serde(default)]
+    pub ignored_users: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Command {
+    pub aliases: Vec<String>,
+    pub value: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum StringOrCommand {
+    Text(String),
+    Cmd(Command),
+}
+
+impl ToString for StringOrCommand {
+    fn to_string(&self) -> String {
+        match self {
+            StringOrCommand::Text(txt) => txt.clone(),
+            StringOrCommand::Cmd(cmd) => cmd.value.clone(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -52,22 +71,25 @@ pub struct Config {
     #[serde(default)]
     pub variables: HashMap<String, String>,
     #[serde(default)]
-    pub aliases: HashMap<String, String>,
-    #[serde(default)]
-    pub commands: HashMap<String, String>,
+    pub commands: HashMap<String, StringOrCommand>,
     #[serde(default)]
     pub auto_commands: AutoCommands,
     #[serde(default)]
-    pub user_access: HashMap<String, UserAccess>,
+    pub groups: HashMap<String, Group>,
 }
 
 impl Config {
     pub fn load<P: AsRef<Path>>(path: P) -> Config {
+        // std::fs::read_to_string(path)
+        //     .iter()
+        //     .flat_map(|s| toml::from_str(&s))
+        //     .next()
+        //     .unwrap_or_default()
         std::fs::read_to_string(path)
             .iter()
-            .flat_map(|s| toml::from_str(&s))
+            .map(|s| toml::from_str(&s).unwrap())
             .next()
-            .unwrap_or_default()
+            .unwrap()
     }
 }
 

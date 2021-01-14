@@ -1,3 +1,4 @@
+use crate::config::StringOrCommand;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -63,14 +64,25 @@ impl Into<Runtime> for crate::config::Config {
         for (name, value) in &self.commands {
             let mut value = value.to_owned();
             for (variable_name, variable_value) in &self.variables {
-                value = value.replace(&format!("${}", variable_name), &variable_value);
+                match &mut value {
+                    StringOrCommand::Text(value) => {
+                        *value = value.replace(&format!("${}", variable_name), &variable_value);
+                    }
+                    StringOrCommand::Cmd(cmd) => {
+                        cmd.value = cmd
+                            .value
+                            .replace(&format!("${}", variable_name), &variable_value);
+                    }
+                }
             }
-            commands.insert(format!("{}", name), value);
-        }
-
-        for (name, target) in &self.aliases {
-            if let Some(text) = commands.get(target).cloned() {
-                commands.entry(name.clone()).or_insert(text.clone());
+            let text = value.to_string();
+            commands.insert(format!("{}", name), text.clone());
+            if let StringOrCommand::Cmd(cmd) = &value {
+                for name in &cmd.aliases {
+                    if !commands.contains_key(name) {
+                        commands.insert(name.to_owned(), text.clone());
+                    }
+                }
             }
         }
 
