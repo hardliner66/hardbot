@@ -77,12 +77,11 @@ fn main() -> anyhow::Result<()> {
         let top5 = chatters
             .iter()
             .rev()
-            .map(|(name, _)| *name)
-            .cloned()
-            .filter(|name| !config.general.ignored_users.contains(name))
+            .map(|(name, chatter)| (*name, chatter))
+            .filter(|(name, _)| !config.general.ignored_users.contains(name))
             .enumerate()
             .take(5)
-            .map(|(i, name)| format!("{}. {}", i + 1, name))
+            .map(|(i, (name, chatter))| format!("{}. {} ({} Points)", i + 1, name, chatter.points))
             .collect::<Vec<_>>();
         let response = format!("Top 5, requested by @{}: {}", name, top5.join(" | "));
         Some(response)

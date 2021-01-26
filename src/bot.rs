@@ -76,14 +76,13 @@ impl Bot {
                         match self.handlers.get(command) {
                             Some(handler) => {
                                 let allowed = if let Some(allow_list) = &handler.allow_list {
-                                    eprintln!("{:?}", self.runtime.config.groups);
                                     allow_list.contains(&format!("@{}", name))
                                         || self
                                             .runtime
                                             .config
                                             .groups
                                             .iter()
-                                            .filter(|(_, g)| dbg!(g).users.contains(&name.to_owned()))
+                                            .filter(|(_, g)| g.users.contains(&name.to_owned()))
                                             .any(|(name, _)| {
                                                 allow_list.contains(&format!("#{}", name))
                                             })
