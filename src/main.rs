@@ -1,10 +1,13 @@
 use rand::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::channel;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use stringlit::s;
-use twitch_chat_wrapper::{run, ChatMessage};
+use twitch_irc::login::{CredentialsPair, StaticLoginCredentials};
+use twitch_irc::message::ServerMessage;
+use twitch_irc::ClientConfig;
+use twitch_irc::TCPTransport;
+use twitch_irc::TwitchIRCClient;
 
 mod bot;
 mod config;
@@ -14,6 +17,16 @@ use bot::Bot;
 use runtime::Runtime;
 
 const CONFIG_FILE: &str = "config.toml";
+
+fn channel_to_join() -> Result<String, Box<dyn std::error::Error>> {
+    let channel = get_env_var("TWITCH_CHANNEL")?;
+    Ok(channel)
+}
+
+fn get_env_var(key: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let my_var = std::env::var(key)?;
+    Ok(my_var)
+}
 
 fn give_points(rt: &mut Runtime) {
     for (_, chatter) in rt.data.chatters.iter_mut() {
@@ -28,10 +41,8 @@ fn get_name_from_string(s: &str) -> String {
     s.trim().replace("@", "")
 }
 
-fn main() -> anyhow::Result<()> {
-    let (tx, rx) = channel::<String>();
-    let (tx2, rx2) = channel::<ChatMessage>();
-
+#[tokio::main]
+async fn main() {
     let mut data_dir = dirs::home_dir().unwrap();
     data_dir.push(".config/hardbot");
 
@@ -40,16 +51,24 @@ fn main() -> anyhow::Result<()> {
     let config = config::Config::load(config_file);
     let mut bot = Bot::new(config);
 
-    bot.register("hype", None, |config, _commands, _data, _name, msg| {
-        let response = msg
-            .chars()
-            .filter(|&c| c == 'e')
-            .take(30)
-            .map(|_| config.general.hype_emote.clone())
-            .collect::<Vec<_>>()
-            .join(" ");
-        Some(response)
+    bot.register("calc", None, |_config, _commands, _data, _name, msg| {
+        let mut ns = fasteval::EmptyNamespace;
+        match fasteval::ez_eval(&msg[4..], &mut ns) {
+            Ok(v) => Some(v.to_string()),
+            Err(e) => Some(e.to_string()),
+        }
     });
+
+    // bot.register("hype", None, |config, _commands, _data, _name, msg| {
+    //     let response = msg
+    //         .chars()
+    //         .filter(|&c| c == 'e')
+    //         .take(30)
+    //         .map(|_| config.general.hype_emote.clone())
+    //         .collect::<Vec<_>>()
+    //         .join(" ");
+    //     Some(response)
+    // });
 
     bot.register("points", None, |_config, _commandss, data, name, msg| {
         let message = get_name_from_string(&msg[6..]);
@@ -234,95 +253,102 @@ fn main() -> anyhow::Result<()> {
         },
     );
 
-    let bot = Arc::new(Mutex::new(bot));
+    let sig_term = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&sig_term)).unwrap();
 
-    let bot_sender = tx2.clone();
+    let sig_int = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&sig_int)).unwrap();
 
-    std::thread::spawn(move || -> anyhow::Result<()> {
-        let sig_term = Arc::new(AtomicBool::new(false));
-        signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&sig_term))?;
+    let mut last_check = SystemTime::now();
+    let mut last_save = SystemTime::now();
+    let mut last_auto_action = SystemTime::now();
 
-        let sig_int = Arc::new(AtomicBool::new(false));
-        signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&sig_int))?;
+    let (auto_commands, message_timeout) = {
+        let message_timeout = bot.runtime.config.general.message_timeout.unwrap_or(1);
+        let auto_commands = bot.runtime.config.auto_commands.commands.clone();
+        (auto_commands, message_timeout)
+    };
+    let mut auto_commands = auto_commands.iter().cycle();
 
-        let mut last_check = SystemTime::now();
-        let mut last_save = SystemTime::now();
-        let mut last_auto_action = SystemTime::now();
+    let twitch_name = get_env_var("TWITCH_NAME").unwrap();
+    let twitch_token = get_env_var("TWITCH_TOKEN")
+        .unwrap()
+        .replacen("oauth:", "", 1);
+    let channel_to_join = channel_to_join().unwrap();
 
-        let (auto_commands, message_timeout) = {
-            let bot = bot.lock().unwrap();
-            let message_timeout = bot.runtime.config.general.message_timeout.unwrap_or(1);
-            let auto_commands = bot.runtime.config.auto_commands.commands.clone();
-            (auto_commands, message_timeout)
-        };
-        let mut auto_commands = auto_commands.iter().cycle();
+    // default configuration is to join chat as anonymous.
+    let config = ClientConfig {
+        login_credentials: StaticLoginCredentials {
+            credentials: CredentialsPair {
+                login: twitch_name.clone(),
+                token: Some(twitch_token),
+            },
+        },
+        ..ClientConfig::default()
+    };
 
-        while !sig_int.load(Ordering::Relaxed) && !sig_term.load(Ordering::Relaxed) {
-            while let Ok(msg) = rx2.recv_timeout(Duration::from_secs(message_timeout)) {
-                let mut bot = bot.lock().unwrap();
-                if let Some(response) = { bot.handle_message(&msg.name, &msg.message) } {
-                    for msg in response.split('\n') {
-                        tx.send(msg.to_owned()).unwrap();
+    let (mut incoming_messages, client) =
+        TwitchIRCClient::<TCPTransport, StaticLoginCredentials>::new(config);
+
+    client.join(channel_to_join.clone());
+
+    while !sig_int.load(Ordering::Relaxed) && !sig_term.load(Ordering::Relaxed) {
+        let message = tokio::time::timeout(
+            Duration::from_secs(message_timeout),
+            incoming_messages.recv(),
+        );
+        if let Ok(Some(msg)) = message.await {
+            match msg {
+                ServerMessage::Privmsg(msg) => {
+                    let response = bot.handle_message(&msg.sender.name, &msg.message_text);
+                    if let Some(response) = response {
+                        for msg in response.split('\n') {
+                            client
+                                .say(channel_to_join.clone(), msg.to_owned())
+                                .await
+                                .unwrap();
+                        }
                     }
                 }
+                _ => (),
             }
+        }
 
-            let now = SystemTime::now();
+        let now = SystemTime::now();
 
-            {
-                let mut bot = bot.lock().unwrap();
-                let time_since_last_check = now.duration_since(last_check).unwrap().as_secs_f32();
-                if time_since_last_check > bot.runtime.config.points.tick_speed as f32 {
-                    for _ in
-                        0..(time_since_last_check as u64 / bot.runtime.config.points.tick_speed)
-                    {
-                        give_points(&mut bot.runtime);
-                    }
-                    last_check = now;
-                }
+        let time_since_last_check = now.duration_since(last_check).unwrap().as_secs_f32();
+        if time_since_last_check > bot.runtime.config.points.tick_speed as f32 {
+            for _ in 0..(time_since_last_check as u64 / bot.runtime.config.points.tick_speed) {
+                give_points(&mut bot.runtime);
+            }
+            last_check = now;
+        }
 
-                if now.duration_since(last_save).unwrap().as_secs_f32()
-                    > bot.runtime.config.general.save_time
-                {
-                    last_save = now;
-                    let _ = bot.save_data();
-                }
+        if now.duration_since(last_save).unwrap().as_secs_f32()
+            > bot.runtime.config.general.save_time
+        {
+            last_save = now;
+            let _ = bot.save_data();
+        }
 
-                if now.duration_since(last_auto_action).unwrap().as_secs_f32()
-                    > bot.runtime.config.auto_commands.time
-                {
-                    last_auto_action = now;
-                    if let Some(command) = auto_commands.next() {
-                        let _ = bot_sender.send(
-                            ChatMessage::builder("<auto>".to_string(), format!("!{}", command))
-                                .build(),
-                        );
+        if now.duration_since(last_auto_action).unwrap().as_secs_f32()
+            > bot.runtime.config.auto_commands.time
+        {
+            last_auto_action = now;
+            if let Some(command) = auto_commands.next() {
+                if let Some(response) = { bot.handle_message("<auto>", &format!("!{}", command)) } {
+                    for msg in response.split('\n') {
+                        client
+                            .say(channel_to_join.clone(), msg.to_owned())
+                            .await
+                            .unwrap();
                     }
                 }
             }
         }
+    }
 
-        let _ = bot.lock().unwrap().save_data();
+    let _ = bot.save_data();
 
-        std::process::exit(0);
-    });
-
-    let twitch_name = get_env_var("TWITCH_NAME").unwrap();
-    let twitch_token = get_env_var("TWITCH_TOKEN").unwrap();
-    let channels_to_join = channels_to_join().unwrap();
-
-    Ok(run(twitch_name, twitch_token, channels_to_join, rx, tx2).unwrap())
-}
-
-fn channels_to_join() -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let channels = get_env_var("TWITCH_CHANNEL")?
-        .split(',')
-        .map(ToString::to_string)
-        .collect();
-    Ok(channels)
-}
-
-fn get_env_var(key: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let my_var = std::env::var(key)?;
-    Ok(my_var)
+    std::process::exit(0);
 }
