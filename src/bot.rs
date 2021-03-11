@@ -44,7 +44,12 @@ impl Bot {
 
     pub fn handle_message(&mut self, name: &str, message: &str) -> Option<String> {
         println!("{}: {}", name, message);
-        let message = message.trim().to_lowercase();
+        let name = name.trim().to_lowercase();
+        let mut message = message.trim().to_lowercase();
+
+        if message.starts_with("$") {
+            message = format!("!so {}", &message[1..]);
+        }
 
         if !message.starts_with("!") {
             (*self
